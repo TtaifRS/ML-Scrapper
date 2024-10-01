@@ -1,0 +1,26 @@
+{
+  "name": "close-crm-api",
+  "version": "1.0.0",
+  "description": "close crm lead updates by scraping data from web",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "author": "Taif Rahaman",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.7.7",
+    "chalk": "^5.3.0",
+    "cheerio": "^1.0.0",
+    "cluster": "^0.7.7",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "mongoose": "^8.7.0",
+    "p-queue": "^8.0.1",
+    "perf_hooks": "^0.0.1",
+    "puppeteer": "^23.4.1",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  }
+}
