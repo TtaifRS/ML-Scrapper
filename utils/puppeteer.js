@@ -45,3 +45,18 @@ export const blockUnnecessaryResources = async (page) => {
   });
 };
 
+// Utility function to navigate to a job link with retries
+export const navigateToJobLink = async (page, url, retries = 3) => {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      await page.goto(url, { timeout: 60000, waitUntil: 'domcontentloaded' });
+      return true; // Successfully navigated
+    } catch (error) {
+      console.error(`Attempt ${attempt + 1} to navigate to ${url} failed: ${error.message}`);
+      if (attempt === retries - 1) {
+        throw new Error(`Failed to navigate to ${url} after ${retries} attempts.`);
+      }
+      await page.waitForTimeout(2000); // Wait a bit before retrying
+    }
+  }
+};

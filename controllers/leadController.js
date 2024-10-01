@@ -5,7 +5,7 @@ import { performance } from 'perf_hooks';
 import Lead from '../models/leads.js';
 import { jobTitles } from '../data/jobtitles.js';
 import { extractAboutSectionInfo, extractListings, extractIndeedUrl } from '../utils/scrapper.js';
-import { blockUnnecessaryResources, launchBrowser } from '../utils/puppeteer.js';
+import { blockUnnecessaryResources, launchBrowser, navigateToJobLink } from '../utils/puppeteer.js';
 import { randomWait, logElapsedTime } from '../helpers/heleper.js';
 import Progress from '../models/progress.js'; // Import the updated progress model
 
@@ -74,7 +74,9 @@ export const postLeads = async (req, res) => {
                 console.log(chalk.blue(`Scraping URL: ${url}`));
 
                 try {
-                  await page.goto(url, { timeout: 60000 });
+                  const navigationSuccess = await navigateToJobLink(page, url);
+                  if (!navigationSuccess) throw new Error(`Failed to navigate to ${url}`);
+
                   await page.waitForSelector('td.resultContent', { timeout: 60000 });
                   const jobListings = extractListings(await page.content());
                   await page.close(); // Close page after scraping
@@ -149,21 +151,26 @@ export const postLeads = async (req, res) => {
 
             // Move to the next set of pages using "next page" button if available
             const page = await browser.newPage();
-            await page.goto(pageUrls[0], { timeout: 60000 });
-            try {
-              const nextPageButton = await page.$('a[data-testid="pagination-page-next"]');
-              if (nextPageButton) {
-                console.log(chalk.green('Next page button found, continuing to next batch of pages.'));
-                pageNumber += numPages;
-              } else {
-                console.log(chalk.yellow('No more pages available for this title.'));
+            const navigationSuccess = await navigateToJobLink(page, pageUrls[0]);
+
+            if (!navigationSuccess) {
+              keepScraping = false;
+            } else {
+              try {
+                const nextPageButton = await page.$('a[data-testid="pagination-page-next"]');
+                if (nextPageButton) {
+                  console.log(chalk.green('Next page button found, continuing to next batch of pages.'));
+                  pageNumber += numPages;
+                } else {
+                  console.log(chalk.yellow('No more pages available for this title.'));
+                  keepScraping = false;
+                }
+              } catch (err) {
+                console.error(chalk.red('Error finding next page button:', err));
                 keepScraping = false;
               }
-            } catch (err) {
-              console.error(chalk.red('Error finding next page button:', err));
-              keepScraping = false;
+              await page.close();
             }
-            await page.close();
 
             // Random wait between page loads to avoid detection
             await randomWait(2000, 5000);
@@ -206,7 +213,6 @@ export const postLeads = async (req, res) => {
   }
 };
 
-
 // Function to update Indeed URLs for leads
 export const updateIndeedUrlAndInfo = async (req, res) => {
   const startTime = performance.now(); // Start time for elapsed time tracking
@@ -231,7 +237,7 @@ export const updateIndeedUrlAndInfo = async (req, res) => {
 
         // Check if indeedInfo is true, skip if already processed
         if (lead.indeedInfo) {
-          console.log(chalk.red(`Skipping lead for ${lead.companyName}, indeedInfo already exists.`));
+          console.log(chalk.gray(`Skipping lead for ${lead.companyName}, indeedInfo already exists.`));
           return;
         }
 
@@ -247,7 +253,7 @@ export const updateIndeedUrlAndInfo = async (req, res) => {
 
           if (indeedUrl) {
             lead.indeedUrl = indeedUrl;
-
+            console.log(chalk.green(`Indeed URL found and updated for ${lead.companyName}.`));
           }
 
           // Now go to the Indeed company page to scrape additional info
@@ -283,7 +289,6 @@ export const updateIndeedUrlAndInfo = async (req, res) => {
               lead.companyUrl = aboutInfo.companyUrl;
               updatedFields.push('Company URL');
             }
-
             if (aboutInfo.founded && aboutInfo.founded !== lead.founded) {
               lead.founded = aboutInfo.founded;
               updatedFields.push('Founded');
@@ -297,7 +302,7 @@ export const updateIndeedUrlAndInfo = async (req, res) => {
             await lead.save();
 
             if (updatedFields.length > 0) {
-              console.log(chalk.bgGreen(`Updated ${lead.companyName}: ${updatedFields.join(', ')}.`));
+              console.log(chalk.green(`Updated ${lead.companyName}: ${updatedFields.join(', ')}.`));
             } else {
               console.log(chalk.gray(`No new updates for ${lead.companyName}.`));
             }
@@ -324,6 +329,8 @@ export const updateIndeedUrlAndInfo = async (req, res) => {
     res.status(500).json({ message: 'Failed to update Indeed URLs and company info', error: err.message });
   }
 };
+
+
 
 
 
