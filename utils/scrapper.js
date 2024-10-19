@@ -31,15 +31,23 @@ export const extractIndeedUrl = async (page) => {
 
     return indeedUrl;
   } catch (error) {
-    console.error('Error extracting Indeed URL:', error);
-    return null;  // Return null if there's an error
+    console.error('Error extracting Indeed URL:', error.message);
+    return null;  // Return null if there's an error or if the selector doesn't exist
   }
 };
 
 
+
 export const extractAboutSectionInfo = async (page) => {
   try {
-    await page.waitForSelector('section[data-testid="AboutSection-section"]', { timeout: 60000 });
+    // Wait for the section to appear with a timeout of 60 seconds
+    const sectionExists = await page.waitForSelector('section[data-testid="AboutSection-section"]', { timeout: 60000 }).catch(() => null);
+
+    // If the section doesn't exist, return null to indicate no info available
+    if (!sectionExists) {
+      console.log('No About section found on this page.');
+      return null;
+    }
 
     const companyInfo = await page.evaluate(async () => {
       const info = {};
@@ -59,25 +67,20 @@ export const extractAboutSectionInfo = async (page) => {
         } else if (li.getAttribute('data-testid') === 'companyInfo-industry') {
           info.industry = secondDiv;
         } else if (li.getAttribute('data-testid') === 'companyInfo-companyWebsite') {
-          // For company website, extract the href attribute from the <a> tag
           const websiteLink = li.querySelector('a');
           info.companyUrl = websiteLink ? websiteLink.href : '';
         } else if (li.getAttribute('data-testid') === 'companyInfo-headquartersLocation') {
-          // Click the button to open the modal if available
           const button = li.querySelector('button');
           if (button) {
             button.click();
-
-            // Wait for modal content to load
             await new Promise((resolve) => setTimeout(resolve, 1000));
-
             const modal = document.querySelector('div[aria-labelledby="modal-1-title"]');
             if (modal) {
               const span = modal.querySelector('span');
               info.headquarter = span ? span.innerText : '';
             }
           } else {
-            info.headquarter = secondDiv; // If no button, use the default div text
+            info.headquarter = secondDiv;
           }
         } else if (li.getAttribute('data-testid') === 'companyInfo-founded') {
           info.founded = secondDiv;
@@ -89,10 +92,12 @@ export const extractAboutSectionInfo = async (page) => {
 
     return companyInfo;
   } catch (error) {
-    console.error('Error extracting About Section info:', error);
+    console.error('Error extracting About Section info:', error.message);
     return null;  // Return null if there's an error
   }
 };
+
+
 
 
 

@@ -2,17 +2,23 @@ import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import chalk from 'chalk';
 import { performance } from 'perf_hooks';
+import axios from 'axios';
+import pLimit from 'p-limit';  // Use p-limit to control concurrency
+
 import Lead from '../models/leads.js';
 import { jobTitles } from '../data/jobtitles.js';
 import { extractAboutSectionInfo, extractListings, extractIndeedUrl } from '../utils/scrapper.js';
 import { blockUnnecessaryResources, launchBrowser, navigateToJobLink } from '../utils/puppeteer.js';
-import { randomWait, logElapsedTime } from '../helpers/heleper.js';
+import { randomWait, logElapsedTime, isValidUrl } from '../helpers/heleper.js';
 import Progress from '../models/progress.js'; // Import the updated progress model
 
 // Add Stealth plugin
 puppeteer.use(StealthPlugin());
 
-// Function to scrape job and post new leads
+
+/*
+~ Function to scrape job and post new leads
+ */
 export const postLeads = async (req, res) => {
   const startTime = performance.now(); // Start time for elapsed time tracking
   const numPages = 5; // Number of pages to scrape concurrently
@@ -213,18 +219,36 @@ export const postLeads = async (req, res) => {
   }
 };
 
-// Function to update Indeed URLs for leads
+
+/*
+& Function to update Indeed URLs for leads
+ */
 export const updateIndeedUrlAndInfo = async (req, res) => {
   const startTime = performance.now(); // Start time for elapsed time tracking
   try {
     console.log(chalk.blue('Starting the process to update Indeed URLs and company info...'));
 
-    const leads = await Lead.find();
+    const leads = await Lead.find({ indeedInfo: false });
     const totalLeads = leads.length;
     console.log(chalk.green(`Total number of leads: ${totalLeads}`));
 
     const browser = await launchBrowser();
     const batchSize = 5; // Number of pages to open concurrently
+
+    // Set break thresholds based on total lead size
+    let breakPercentage;
+    if (totalLeads <= 100) {
+      breakPercentage = 0.20; // 20% for 100 or fewer leads
+    } else if (totalLeads <= 500) {
+      breakPercentage = 0.10; // 10% for leads between 101 and 500
+    } else if (totalLeads <= 1000) {
+      breakPercentage = 0.05; // 5% for leads between 501 and 1000
+    } else {
+      breakPercentage = 0.025; // 2.5% for more than 1000 leads
+    }
+
+    const breakThreshold = Math.floor(totalLeads * breakPercentage); // Calculate threshold based on total leads
+    console.log(chalk.green(`Break threshold set to ${breakPercentage * 100}% of total leads.`));
 
     for (let i = 0; i < totalLeads; i += batchSize) {
       const batch = leads.slice(i, i + batchSize); // Process batch of 5 leads
@@ -242,29 +266,37 @@ export const updateIndeedUrlAndInfo = async (req, res) => {
         }
 
         const lastJob = lead.jobs[lead.jobs.length - 1];
-        if (!lastJob || !lastJob.jobLink) return;
+        if (!lastJob || !lastJob.jobLink || !isValidUrl(lastJob.jobLink)) {
+          console.log(chalk.red(`Invalid or missing job link for ${lead.companyName}. Skipping this lead.`));
+          return;
+        }
 
         const page = await browser.newPage();
         await blockUnnecessaryResources(page);
 
         try {
-          await page.goto(lastJob.jobLink, { timeout: 60000 });
+          await page.goto(lastJob.jobLink, { timeout: 120000 }); // Increased timeout to 120 seconds
           const indeedUrl = await extractIndeedUrl(page);
 
-          if (indeedUrl) {
-            lead.indeedUrl = indeedUrl;
-            console.log(chalk.green(`Indeed URL found and updated for ${lead.companyName}.`));
+          if (!indeedUrl) {
+            lead.indeedInfo = true;
+            await lead.save();
+            console.log(chalk.red(`No Indeed URL found for ${lead.companyName}. Skipping.`));
+            return;
           }
 
+          lead.indeedUrl = indeedUrl;
+          console.log(chalk.green(`Indeed URL found and updated for ${lead.companyName}.`));
+
           // Now go to the Indeed company page to scrape additional info
-          await page.goto(indeedUrl, { timeout: 60000 });
+          await page.goto(indeedUrl, { timeout: 120000 });
           const aboutInfo = await extractAboutSectionInfo(page);
 
           // Track which fields are updated
           const updatedFields = [];
 
-          // Update lead with the extracted company info and log which fields were updated
           if (aboutInfo) {
+            // Update lead with the extracted company info and log which fields were updated
             if (aboutInfo.ceo && aboutInfo.ceo !== lead.ceo) {
               lead.ceo = aboutInfo.ceo;
               updatedFields.push('CEO');
@@ -307,14 +339,24 @@ export const updateIndeedUrlAndInfo = async (req, res) => {
               console.log(chalk.gray(`No new updates for ${lead.companyName}.`));
             }
           } else {
-            console.log(chalk.red(`No about section info found for ${lead.companyName}.`));
+            // No about section info found, mark indeedInfo as true
+            lead.indeedInfo = true;
+            await lead.save();
+            console.log(chalk.red(`No about section info found for ${lead.companyName}. Marked as processed.`));
           }
         } catch (err) {
-          console.error(chalk.red(`Error processing job link for ${lead.companyName}:`, err));
+          console.error(chalk.red(`Error processing job link for ${lead.companyName}:`, err.message));
         }
 
         await page.close();
       }));
+
+      // Check if progress has reached the break threshold
+      if ((i + batchSize) % breakThreshold < batchSize) {
+        console.log(chalk.blue(`Reached ${breakPercentage * 100}% of leads completed. Taking a break for 10-20 seconds...`));
+        await browser.pages().then(pages => Promise.all(pages.map(page => page.close()))); // Close all pages
+        await randomWait(10000, 20000); // Wait for 10-20 seconds
+      }
 
       // Wait a little before processing the next batch to avoid overwhelming the server
       await randomWait(1000, 3000);
@@ -334,9 +376,9 @@ export const updateIndeedUrlAndInfo = async (req, res) => {
 
 
 
-
-
-// Function to get all leads
+/*
+~ Function to get all leads
+ */
 export const getLeads = async (req, res) => {
   try {
     console.log(chalk.blue('Fetching all leads...'));
@@ -356,7 +398,10 @@ export const getLeads = async (req, res) => {
   }
 };
 
-// Function to delete all leads
+
+/*
+~ Function to delete all leads
+ */
 export const deleteAllLeads = async (req, res) => {
   try {
     console.log(chalk.blue('Starting the process to delete all leads...'));
@@ -371,3 +416,95 @@ export const deleteAllLeads = async (req, res) => {
     res.status(500).json({ message: 'Failed to delete all leads', error: err.message });
   }
 };
+
+
+
+
+
+// const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+// export const searchContactsByTitle = async (req, res) => {
+//   try {
+//     const leads = await Lead.find();  // Assuming 'Lead' is your database model
+//     const matchedResults = [];
+
+//     // Loop over leads and process one at a time with a delay of 5 seconds
+//     for (const lead of leads) {
+//       try {
+//         console.log(chalk.magenta(`Currently search for ${lead.companyName}`))
+//         const apiEndPoint = 'https://api.close.com/api/v1/data/search/';
+//         const requestData = {
+//           "query": {
+//             "type": "and",
+//             "queries": [
+//               {
+//                 "type": "object_type",
+//                 "object_type": "lead"
+//               },
+//               {
+//                 "type": "field_condition",
+//                 "field": {
+//                   "type": "regular_field",
+//                   "object_type": "lead",
+//                   "field_name": "display_name"
+//                 },
+//                 "condition": {
+//                   "type": "text",
+//                   "mode": "full_words",
+//                   "value": lead.companyName  // Assuming companyName is the search field
+//                 }
+//               }
+//             ]
+//           }
+//         };
+
+//         const response = await axios.post(apiEndPoint, requestData, {
+//           auth: {
+//             username: process.env.API_KEY,  // Your Close CRM API key
+//             password: ''
+//           },
+//           headers: {
+//             'Accept': 'application/json',
+//             'Content-Type': 'application/json'
+//           }
+//         });
+
+//         console.log(chalk.green())
+//         // If the response contains matched data, push it to results
+//         if (response.data && response.data.data.length > 0) {
+//           console.log(chalk.green(response.data.data))
+//           matchedResults.push({
+//             localLead: lead,
+//             matchedLead: response.data.data
+//           });
+//         } else {
+//           console.log(chalk.red(`No lead found in close for ${lead.companyName}`))
+//         }
+
+//         // Wait 5 seconds before making the next API call
+//         await delay(500);
+
+//       } catch (err) {
+//         console.error('Error fetching contacts for lead:', lead.companyName, err);
+//         if (err.response) {
+//           res.status(err.response.status).json(err.response.data);
+//         } else {
+//           res.status(500).json({ message: 'Failed to fetch contacts' });
+//         }
+//         return;  // Exit the function if an error occurs
+//       }
+//     }
+
+//     // Once all API requests are done, send the matched results
+//     res.status(200).json({ totalMatches: matchedResults.length, matchedResults });
+//   } catch (err) {
+//     console.error('Error fetching leads:', err);
+//     res.status(500).json({ message: 'Failed to fetch leads' });
+//   }
+// };
+
+
+
+
+// const indeedInfoApi = cf_BCr4gXwa8t4CCzDbKxo9AgIMlDzzddOFB7h0F3E8ha0
+// const indeedJobApi = cf_KXZj1P4M8V2yGBRotcD33i0Zpmld5U6qRxZQtZT4wrg

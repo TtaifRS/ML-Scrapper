@@ -14,3 +14,18 @@ export const randomWait = (min, max) => {
   console.log(`Waiting for ${waitTime} milliseconds...`);
   return new Promise((resolve) => setTimeout(resolve, waitTime));
 };
+
+export const isValidUrl = (url) => {
+  try {
+    new URL(url);
+    return true;
+  } catch (error) {
+    return false;
+  }
+};
+
+
+// helpers/heleper.js
+export const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+

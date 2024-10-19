@@ -2,11 +2,11 @@ import express from 'express';
 import {
   deleteAllLeads,
   getLeads,
-  // mergeDuplicateJobs,
   postLeads,
   updateIndeedUrlAndInfo,
-  // deleteDuplicateLeads // Import the new function
 } from '../controllers/leadController.js';
+
+import { searchContactsByTitle } from '../controllers/closeController.js';
 
 const router = express.Router();
 
@@ -25,13 +25,16 @@ router.put('/leads/update/indeed', updateIndeedUrlAndInfo);
 // Route to delete all leads
 router.delete('/leads', deleteAllLeads);
 
-// Route to delete duplicate leads
-// router.delete('/leads/duplicates', deleteDuplicateLeads); 
-
+// Route to get all close crm lead 
+// router.get('/leads/close', getCloseLeads)
+// router.get('/leads/close/object', getCustomObjectTypes)
+// router.get('/leads/close/custom/object/:id', getCustomObjectTypeById)
+// router.get('/leads/close/custom-object', getCustomObjectsByLeadId)
+router.post('/leads/filter', searchContactsByTitle)
 export default router;
 
 
-// // Function to Merge lead by job
+
 // export const mergeDuplicateJobs = async (req, res) => {
 //   try {
 //     console.log(chalk.blue('Starting the process to find and merge duplicate job links...'));
